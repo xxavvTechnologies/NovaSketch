@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Allow: /editor
+Allow: /projects
+
+Sitemap: https://sketch.nova.xxavvgroup.com/sitemap.xml

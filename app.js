@@ -1,897 +1,998 @@
-class DrawingApp {
+class NovaSketch {
     constructor() {
-        this.canvas = document.getElementById('canvas');
-        this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
-        // Set attribute on canvas element too for maximum compatibility
-        this.canvas.setAttribute('willReadFrequently', 'true');
+        this.canvas = document.getElementById('mainCanvas');
+        this.ctx = this.canvas.getContext('2d');
+        this.currentTool = 'select';
         this.isDrawing = false;
-        this.history = [];
-        this.historyIndex = -1;
-        this.maxHistory = 50;
+        this.shapes = [];
+        this.selectedShape = null;
+        this.currentColor = '#000000';
+        this.startPos = null;
+        this.currentShape = null;
+        this.brushSize = 5;
+        this.brushOpacity = 100;
+        this.paths = [];
+        this.currentPath = null;
+        this.lastDrawTime = 0;
+        this.drawThrottle = 1000 / 60; // 60 FPS
+        this.lastPoint = null;
+        this.fillColor = '#000000';
+        this.strokeColor = '#000000';
+        this.fontSize = 16;
+        this.fontFamily = 'Arial';
+        this.textColor = '#000000';
+        this.textBackground = '#ffffff';
+        this.textBold = false;
+        this.editingText = null;
+        this.selectedElements = new Set();
+        this.layersList = document.getElementById('layersList');
+        this.lastSelectedShape = null; // Add this new property
 
-        this.state = {
-            tool: 'brush',
-            strokeColor: '#000000',
-            fillColor: '#ffffff',
-            size: 5,
-            font: 'Arial',
-            fontSize: 20,
-            grid: {
-                show: false,
-                size: 20,
-                snap: false
-            },
-            selection: null,
-            pattern: {
-                type: 'dots',
-                size: 10,
-                spacing: 5
-            }
-        };
-
-        this.projects = [];
-
-        // Add default canvas size
-        this.defaultSize = {
-            width: 800,
-            height: 600
-        };
-        
-        this.container = document.querySelector('.canvas-container');
-        this.sizeDisplay = document.querySelector('.canvas-size-display');
-        
         this.initializeCanvas();
-        this.initializeResizing();
-        this.attachEventListeners();
-        this.saveInitialState();
-        this.initializePatterns();
-        this.loadProjects();
-
-        this.autoSaveInterval = null;
-        this.hasUnsavedChanges = false;
-        this.setupAutoSave();
-        this.setupProjectManager();
-
-        // Timers and indicators
-        this.autoSaveInterval = null;
-        this.autoSaveDelay = 30000; // 30 seconds
-        this.saveIndicator = document.createElement('div');
-        this.saveIndicator.className = 'auto-save-indicator';
-        document.querySelector('.toolbar').appendChild(this.saveIndicator);
-
-        // Add error handling
-        this.setupErrorHandling();
+        this.addEventListeners();
+        this.initializeElementControls();
+        this.initializeElementPropertyControls();
+        this.initializeExportControls();
         
-        // Add state validation
-        this.validateState = this.validateState.bind(this);
-        this.addStateValidation();
-    }
-
-    setupErrorHandling() {
-        window.onerror = (msg, url, lineNo, columnNo, error) => {
-            console.error('Error: ', msg, url, lineNo, columnNo, error);
-            this.updateAutoSaveIndicator('Error occurred, please refresh');
-            return false;
-        };
-
-        window.onunhandledrejection = (event) => {
-            console.error('Promise rejection: ', event.reason);
-            this.updateAutoSaveIndicator('Save failed, retrying...');
-            this.retryOperation(event.reason);
-        };
-    }
-
-    retryOperation(error) {
-        if (error.message.includes('quota')) {
-            // Clean up old data before retrying
-            this.cleanupStorage();
-            setTimeout(() => this.saveProject(), 1000);
-        }
-    }
-
-    cleanupStorage() {
-        const projectList = JSON.parse(localStorage.getItem('projectList') || '[]');
-        if (projectList.length > 20) {  // Keep only last 20 projects
-            projectList.slice(20).forEach(p => {
-                localStorage.removeItem(`project_${p.id}`);
-            });
-            localStorage.setItem('projectList', JSON.stringify(projectList.slice(0, 20)));
-        }
-    }
-
-    validateState() {
-        if (!this.canvas || !this.ctx) {
-            this.initializeCanvas();
-        }
-        if (!this.state) {
-            this.resetState();
-        }
-        return true;
-    }
-
-    addStateValidation() {
-        ['draw', 'saveState', 'undo', 'redo'].forEach(method => {
-            const original = this[method];
-            this[method] = (...args) => {
-                if (this.validateState()) {
-                    return original.apply(this, args);
-                }
-            };
-        });
-    }
-
-    resetState() {
-        this.state = {
-            tool: 'brush',
-            strokeColor: '#000000',
-            fillColor: '#ffffff',
-            size: 5,
-            font: 'Arial',
-            fontSize: 20,
-            grid: { show: false, size: 20, snap: false },
-            selection: null,
-            pattern: { type: 'dots', size: 10, spacing: 5 }
-        };
+        this.currentProject = null;
+        this.loadProjectFromURL();
+        this.setupAutoSave();
+        this.initializeProjectTitle();
+        this.initializeMenus();
+        this.initializePanelCollapse();
+        this.initializeResizeHandles();
     }
 
     initializeCanvas() {
-        // Set initial canvas size
-        this.canvas.width = this.defaultSize.width;
-        this.canvas.height = this.defaultSize.height;
-        
-        // Set container size
-        this.container.style.width = `${this.defaultSize.width}px`;
-        this.container.style.height = `${this.defaultSize.height}px`;
-        
-        this.updateSizeDisplay();
+        this.resizeCanvas();
+        window.addEventListener('resize', () => this.resizeCanvas());
     }
 
-    initializeResizing() {
-        const handles = document.querySelectorAll('.resize-handle');
-        handles.forEach(handle => {
-            handle.addEventListener('mousedown', this.startResize.bind(this));
+    resizeCanvas() {
+        const container = this.canvas.parentElement;
+        this.canvas.width = container.clientWidth;
+        this.canvas.height = container.clientHeight;
+        this.render();
+    }
+
+    addEventListeners() {
+        // Update tool selection
+        document.querySelectorAll('.tool').forEach(tool => {
+            tool.addEventListener('click', (e) => {
+                const toolType = e.currentTarget.dataset.tool;
+                if (toolType === 'shapes') {
+                    // Don't change the tool, just toggle the submenu visibility
+                    return;
+                }
+                if (toolType) {
+                    this.currentTool = toolType;
+                    this.updateToolUI();
+                }
+            });
         });
 
-        this.resizing = false;
-        this.currentHandle = null;
-        
-        document.addEventListener('mousemove', this.handleResize.bind(this));
-        document.addEventListener('mouseup', this.stopResize.bind(this));
-    }
+        // Add submenu item selection
+        document.querySelectorAll('.submenu-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const toolType = e.currentTarget.dataset.tool;
+                if (toolType) {
+                    this.currentTool = toolType;
+                    this.lastSelectedShape = toolType;
+                    this.updateToolUI();
+                }
+            });
+        });
 
-    startResize(e) {
-        this.resizing = true;
-        this.currentHandle = e.target.className.split(' ')[1];
-        this.startX = e.clientX;
-        this.startY = e.clientY;
-        this.startWidth = this.canvas.width;
-        this.startHeight = this.canvas.height;
-        this.container.classList.add('resizing');
-        
-        // Save current canvas content
-        this.resizeState = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
-        
-        e.preventDefault();
-    }
+        // Canvas events
+        this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+        this.canvas.addEventListener('mousemove', (e) => {
+            const now = performance.now();
+            if (now - this.lastDrawTime < this.drawThrottle) return;
+            this.lastDrawTime = now;
+            this.handleMouseMove(e);
+        });
+        this.canvas.addEventListener('mouseup', () => this.handleMouseUp());
 
-    handleResize(e) {
-        if (!this.resizing) return;
+        // Color controls
+        const fillColorInput = document.getElementById('fillColor');
+        const strokeColorInput = document.getElementById('strokeColor');
+        const fillPreview = document.getElementById('fillColorPreview');
+        const strokePreview = document.getElementById('strokeColorPreview');
 
-        const dx = e.clientX - this.startX;
-        const dy = e.clientY - this.startY;
-        
-        let newWidth = this.startWidth;
-        let newHeight = this.startHeight;
+        if (fillColorInput && strokeColorInput && fillPreview && strokePreview) {
+            fillColorInput.addEventListener('change', (e) => {
+                this.fillColor = e.target.value;
+                fillPreview.style.backgroundColor = e.target.value;
+            });
 
-        switch(this.currentHandle) {
-            case 'bottom-right':
-                newWidth += dx;
-                newHeight += dy;
-                break;
-            case 'bottom-left':
-                newWidth -= dx;
-                newHeight += dy;
-                break;
-            case 'top-right':
-                newWidth += dx;
-                newHeight -= dy;
-                break;
-            case 'top-left':
-                newWidth -= dx;
-                newHeight -= dy;
-                break;
+            strokeColorInput.addEventListener('change', (e) => {
+                this.strokeColor = e.target.value;
+                strokePreview.style.backgroundColor = e.target.value;
+            });
+
+            // Initialize color previews
+            fillPreview.style.backgroundColor = this.fillColor;
+            strokePreview.style.backgroundColor = this.strokeColor;
         }
 
-        // Minimum size of 100x100
-        newWidth = Math.max(100, newWidth);
-        newHeight = Math.max(100, newHeight);
-
-        this.resizeCanvas(newWidth, newHeight);
-    }
-
-    stopResize() {
-        if (!this.resizing) return;
-        this.resizing = false;
-        this.container.classList.remove('resizing');
-        this.saveState();
-    }
-
-    resizeCanvas(width, height) {
-        // Create temporary canvas to store current content
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = this.canvas.width;
-        tempCanvas.height = this.canvas.height;
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.putImageData(this.resizeState, 0, 0);
-
-        // Resize canvas
-        this.canvas.width = width;
-        this.canvas.height = height;
-        this.container.style.width = `${width}px`;
-        this.container.style.height = `${height}px`;
-
-        // Restore content
-        this.ctx.drawImage(tempCanvas, 0, 0);
-        
-        this.updateSizeDisplay();
-    }
-
-    updateSizeDisplay() {
-        this.sizeDisplay.textContent = `${this.canvas.width} × ${this.canvas.height}`;
-    }
-
-    attachEventListeners() {
-        // Tool Selection
-        document.getElementById('tool').addEventListener('change', (e) => {
-            this.state.tool = e.target.value;
-            document.getElementById('textControls').style.display = 
-                e.target.value === 'text' ? 'flex' : 'none';
+        // Brush properties
+        document.getElementById('brushSize').addEventListener('input', (e) => {
+            this.brushSize = parseInt(e.target.value);
+            document.getElementById('brushSizeValue').textContent = `${this.brushSize}px`;
         });
 
-        // Color and Size Controls
-        document.getElementById('strokeColor').addEventListener('change', (e) => 
-            this.state.strokeColor = e.target.value);
-        document.getElementById('fillColor').addEventListener('change', (e) => 
-            this.state.fillColor = e.target.value);
-        document.getElementById('size').addEventListener('change', (e) => 
-            this.state.size = e.target.value);
+        document.getElementById('brushOpacity').addEventListener('input', (e) => {
+            this.brushOpacity = parseInt(e.target.value);
+            document.getElementById('brushOpacityValue').textContent = `${this.brushOpacity}%`;
+        });
 
-        // Text Controls
-        document.getElementById('font').addEventListener('change', (e) => 
-            this.state.font = e.target.value);
-        document.getElementById('fontSize').addEventListener('change', (e) => 
-            this.state.fontSize = e.target.value);
+        // Color pickers
+        document.getElementById('fillColor').addEventListener('change', (e) => {
+            this.fillColor = e.target.value;
+        });
+        document.getElementById('strokeColor').addEventListener('change', (e) => {
+            this.strokeColor = e.target.value;
+        });
 
-        // Action Buttons
-        document.getElementById('undo').addEventListener('click', () => this.undo());
-        document.getElementById('redo').addEventListener('click', () => this.redo());
-        document.getElementById('clear').addEventListener('click', () => this.clear());
-        document.getElementById('save').addEventListener('click', () => this.showSaveDialog());
-        document.getElementById('load').addEventListener('click', () => this.showProjectManager());
-        document.getElementById('closeProjectManager').addEventListener('click', 
-            () => this.overlay.style.display = 'none');
+        // Text properties
+        document.getElementById('fontSize').addEventListener('input', (e) => {
+            this.fontSize = parseInt(e.target.value);
+            if (this.editingText) this.updateText(this.editingText);
+        });
+        document.getElementById('fontFamily').addEventListener('change', (e) => {
+            this.fontFamily = e.target.value;
+            if (this.editingText) this.updateText(this.editingText);
+        });
+        document.getElementById('textBold').addEventListener('change', (e) => {
+            this.textBold = e.target.checked;
+            if (this.editingText) this.updateText(this.editingText);
+        });
+        document.getElementById('textColor').addEventListener('change', (e) => {
+            this.textColor = e.target.value;
+            if (this.editingText) this.updateText(this.editingText);
+        });
+        document.getElementById('textBackground').addEventListener('change', (e) => {
+            this.textBackground = e.target.value;
+            if (this.editingText) this.updateText(this.editingText);
+        });
+    }
 
-        // Drawing Events
-        this.canvas.addEventListener('mousedown', this.startDrawing.bind(this));
-        this.canvas.addEventListener('mousemove', this.draw.bind(this));
-        this.canvas.addEventListener('mouseup', this.stopDrawing.bind(this));
-        this.canvas.addEventListener('mouseout', this.stopDrawing.bind(this));
+    initializeElementControls() {
+        document.getElementById('deleteElement').addEventListener('click', () => this.deleteSelectedElements());
+        document.getElementById('moveUp').addEventListener('click', () => this.moveElement('up'));
+        document.getElementById('moveDown').addEventListener('click', () => this.moveElement('down'));
+        document.getElementById('groupElements').addEventListener('click', () => this.groupSelectedElements());
+    }
 
-        // Keyboard Shortcuts
-        document.addEventListener('keydown', (e) => {
-            if (e.ctrlKey || e.metaKey) {
-                if (e.key === 'z') this.undo();
-                if (e.key === 'y') this.redo();
+    initializeElementPropertyControls() {
+        // Shape properties
+        document.getElementById('elementFillColor').addEventListener('change', (e) => {
+            this.updateSelectedElementProperty('fillColor', e.target.value);
+        });
+        document.getElementById('elementStrokeColor').addEventListener('change', (e) => {
+            this.updateSelectedElementProperty('strokeColor', e.target.value);
+        });
+
+        // Text properties
+        document.getElementById('elementFontSize').addEventListener('input', (e) => {
+            this.updateSelectedElementProperty('fontSize', parseInt(e.target.value));
+        });
+        document.getElementById('elementFontFamily').addEventListener('change', (e) => {
+            this.updateSelectedElementProperty('fontFamily', e.target.value);
+        });
+        document.getElementById('elementTextColor').addEventListener('change', (e) => {
+            this.updateSelectedElementProperty('color', e.target.value);
+        });
+        document.getElementById('elementBackground').addEventListener('change', (e) => {
+            this.updateSelectedElementProperty('background', e.target.value);
+        });
+        document.getElementById('elementTextBold').addEventListener('change', (e) => {
+            this.updateSelectedElementProperty('bold', e.target.checked);
+        });
+
+        // Brush properties
+        document.getElementById('elementBrushSize').addEventListener('input', (e) => {
+            this.updateSelectedElementProperty('size', parseInt(e.target.value));
+        });
+        document.getElementById('elementOpacity').addEventListener('input', (e) => {
+            this.updateSelectedElementProperty('opacity', parseInt(e.target.value) / 100);
+        });
+    }
+
+    initializeExportControls() {
+        // Export functions are now handled through the submenu items
+        // with data-action attributes in initializeMenus()
+        
+        // Only keep the back to projects button initialization
+        const backButton = document.getElementById('backToProjects');
+        if (backButton) {
+            backButton.addEventListener('click', () => {
+                this.saveProject();
+                window.location.href = 'index.html';
+            });
+        }
+    }
+
+    exportAs(type) {
+        // Create a temporary canvas for export
+        const exportCanvas = document.createElement('canvas');
+        exportCanvas.width = this.canvas.width;
+        exportCanvas.height = this.canvas.height;
+        const ctx = exportCanvas.getContext('2d');
+
+        // Fill white background
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+
+        // Draw all shapes
+        this.shapes.forEach(shape => {
+            this.drawShape.call({ ...this, canvas: exportCanvas, ctx }, shape);
+        });
+
+        switch (type) {
+            case 'png':
+                this.downloadImage(exportCanvas.toDataURL('image/png'), 'novasketch.png');
+                break;
+            case 'jpg':
+                this.downloadImage(exportCanvas.toDataURL('image/jpeg', 0.9), 'novasketch.jpg');
+                break;
+            case 'pdf':
+                this.exportToPDF(exportCanvas);
+                break;
+        }
+    }
+
+    downloadImage(dataUrl, filename) {
+        const link = document.createElement('a');
+        link.download = filename;
+        link.href = dataUrl;
+        link.click();
+    }
+
+    exportToPDF(canvas) {
+        // Using jsPDF library - add this to index.html:
+        // <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+        
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({
+            orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+            unit: 'px',
+            format: [canvas.width, canvas.height]
+        });
+
+        const imageData = canvas.toDataURL('image/jpeg', 1.0);
+        pdf.addImage(imageData, 'JPEG', 0, 0, canvas.width, canvas.height);
+        pdf.save('novasketch.pdf');
+    }
+
+    printCanvas() {
+        const printWindow = window.open('', '_blank');
+        const printDoc = printWindow.document;
+        
+        printDoc.write(`
+            <html>
+                <head>
+                    <title>Print NovaSketch</title>
+                    <style>
+                        @media print {
+                            body { margin: 0; }
+                            canvas { width: 100%; }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <img src="${this.canvas.toDataURL()}" style="width: 100%"/>
+                </body>
+            </html>
+        `);
+        
+        printDoc.close();
+        printWindow.focus();
+        
+        // Wait for image to load before printing
+        setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+        }, 250);
+    }
+
+    updateSelectedElementProperty(property, value) {
+        this.selectedElements.forEach(element => {
+            element[property] = value;
+        });
+        this.render();
+    }
+
+    updateLayersList() {
+        this.layersList.innerHTML = '';
+        this.shapes.forEach((shape, index) => {
+            const item = document.createElement('div');
+            item.className = 'layer-item';
+            if (this.selectedElements.has(shape)) {
+                item.classList.add('selected');
             }
-        });
 
-        document.getElementById('gridToggle').addEventListener('click', 
-            () => this.toggleGrid());
-        document.getElementById('snapToggle').addEventListener('click', 
-            () => this.state.grid.snap = !this.state.grid.snap);
-        document.getElementById('rotation').addEventListener('change', 
-            (e) => this.rotateSelection(e.target.value));
-        
-        document.getElementById('patternType').addEventListener('change',
-            (e) => this.state.pattern.type = e.target.value);
-        document.getElementById('patternSize').addEventListener('change',
-            (e) => this.state.pattern.size = parseInt(e.target.value));
-        document.getElementById('patternSpacing').addEventListener('change',
-            (e) => this.state.pattern.spacing = parseInt(e.target.value));
-    }
-
-    startDrawing(e) {
-        this.isDrawing = true;
-        this.lastX = e.offsetX;
-        this.lastY = e.offsetY;
-        this.ctx.strokeStyle = this.state.strokeColor;
-        this.ctx.fillStyle = this.state.fillColor;
-        this.ctx.lineWidth = this.state.size;
-        this.ctx.lineCap = 'round';
-        
-        // Save state for shape preview
-        this.startState = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
-
-        if (this.state.tool === 'select') {
-            this.startSelection(e);
-        }
-    }
-
-    draw(e) {
-        if (!this.isDrawing) return;
-
-        switch (this.state.tool) {
-            case 'brush':
-                this.ctx.beginPath();
-                this.ctx.moveTo(this.lastX, this.lastY);
-                this.ctx.lineTo(e.offsetX, e.offsetY);
-                this.ctx.stroke();
-                [this.lastX, this.lastY] = [e.offsetX, e.offsetY];
-                break;
-
-            case 'line':
-                this.ctx.putImageData(this.startState, 0, 0);
-                this.ctx.beginPath();
-                this.ctx.moveTo(this.lastX, this.lastY);
-                this.ctx.lineTo(e.offsetX, e.offsetY);
-                this.ctx.stroke();
-                break;
-
-            case 'rect':
-                this.ctx.putImageData(this.startState, 0, 0);
-                const width = e.offsetX - this.lastX;
-                const height = e.offsetY - this.lastY;
-                this.ctx.strokeRect(this.lastX, this.lastY, width, height);
-                this.ctx.fillRect(this.lastX, this.lastY, width, height);
-                break;
-
-            case 'circle':
-                this.ctx.putImageData(this.startState, 0, 0);
-                const radius = Math.sqrt(
-                    Math.pow(e.offsetX - this.lastX, 2) +
-                    Math.pow(e.offsetY - this.lastY, 2)
-                );
-                this.ctx.beginPath();
-                this.ctx.arc(this.lastX, this.lastY, radius, 0, Math.PI * 2);
-                this.ctx.stroke();
-                this.ctx.fill();
-                break;
-
-            case 'eraser':
-                this.ctx.save();
-                this.ctx.globalCompositeOperation = 'destination-out';
-                this.ctx.beginPath();
-                this.ctx.arc(e.offsetX, e.offsetY, this.state.size, 0, Math.PI * 2);
-                this.ctx.fill();
-                this.ctx.restore();
-                break;
-
-            case 'select':
-                this.updateSelection(e);
-                break;
-
-            case 'pattern':
-                this.drawPattern(e);
-                break;
-        }
-
-        this.hasUnsavedChanges = true;
-        this.updateAutoSaveIndicator('Unsaved changes...');
-    }
-
-    stopDrawing(e) {
-        if (!this.isDrawing) return;
-        this.isDrawing = false;
-
-        if (this.state.tool === 'text') {
-            const text = document.getElementById('textInput').value;
-            if (text) {
-                this.ctx.font = `${this.state.fontSize}px ${this.state.font}`;
-                this.ctx.fillStyle = this.state.strokeColor;
-                this.ctx.fillText(text, e.offsetX, e.offsetY);
-            }
-        }
-
-        if (this.state.tool === 'select') {
-            this.finishSelection();
-        }
-
-        this.saveState();
-    }
-
-    saveState() {
-        this.historyIndex++;
-        this.history = this.history.slice(0, this.historyIndex);
-        this.history.push(
-            this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height)
-        );
-        
-        if (this.history.length > this.maxHistory) {
-            this.history.shift();
-            this.historyIndex--;
-        }
-        
-        this.updateButtons();
-    }
-
-    saveInitialState() {
-        this.saveState();
-    }
-
-    updateButtons() {
-        document.getElementById('undo').disabled = this.historyIndex < 1;
-        document.getElementById('redo').disabled = this.historyIndex >= this.history.length - 1;
-    }
-
-    undo() {
-        if (this.historyIndex > 0) {
-            this.historyIndex--;
-            this.ctx.putImageData(this.history[this.historyIndex], 0, 0);
-            this.updateButtons();
-        }
-    }
-
-    redo() {
-        if (this.historyIndex < this.history.length - 1) {
-            this.historyIndex++;
-            this.ctx.putImageData(this.history[this.historyIndex], 0, 0);
-            this.updateButtons();
-        }
-    }
-
-    clear() {
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        this.saveState();
-    }
-
-    save() {
-        localStorage.setItem('drawing', this.canvas.toDataURL());
-    }
-
-    load() {
-        const data = localStorage.getItem('drawing');
-        if (data) {
-            const img = new Image();
-            img.onload = () => {
-                this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-                this.ctx.drawImage(img, 0, 0);
-                this.saveState();
+            const visibility = document.createElement('span');
+            visibility.className = 'visibility';
+            visibility.innerHTML = '<i class="fas fa-eye"></i>';
+            visibility.onclick = (e) => {
+                e.stopPropagation();
+                shape.hidden = !shape.hidden;
+                visibility.classList.toggle('hidden');
+                this.render();
             };
-            img.src = data;
+
+            const name = document.createElement('span');
+            name.textContent = this.getElementName(shape);
+
+            item.appendChild(visibility);
+            item.appendChild(name);
+            item.onclick = (e) => {
+                if (e.ctrlKey) {
+                    this.toggleElementSelection(shape);
+                } else {
+                    this.selectElement(shape);
+                }
+            };
+
+            this.layersList.appendChild(item);
+        });
+    }
+
+    getElementName(shape) {
+        switch (shape.type) {
+            case 'text':
+                return `Text: ${shape.text.substring(0, 20)}`;
+            case 'brush':
+                return 'Brush Stroke';
+            default:
+                return shape.type.charAt(0).toUpperCase() + shape.type.slice(1);
         }
     }
 
-    initializePatterns() {
-        this.patterns = {
-            dots: (ctx, size, spacing) => {
-                ctx.beginPath();
-                ctx.arc(spacing, spacing, size/4, 0, Math.PI * 2);
-                ctx.fill();
-            },
-            lines: (ctx, size, spacing) => {
-                ctx.beginPath();
-                ctx.moveTo(0, spacing);
-                ctx.lineTo(size, spacing);
-                ctx.stroke();
-            },
-            zigzag: (ctx, size, spacing) => {
-                ctx.beginPath();
-                ctx.moveTo(0, spacing);
-                ctx.lineTo(size/2, size-spacing);
-                ctx.lineTo(size, spacing);
-                ctx.stroke();
-            },
-            crosshatch: (ctx, size, spacing) => {
-                ctx.beginPath();
-                ctx.moveTo(0, spacing);
-                ctx.lineTo(size, spacing);
-                ctx.moveTo(spacing, 0);
-                ctx.lineTo(spacing, size);
-                ctx.stroke();
+    toggleElementSelection(shape) {
+        if (this.selectedElements.has(shape)) {
+            this.selectedElements.delete(shape);
+        } else {
+            this.selectedElements.add(shape);
+        }
+        this.updateLayersList();
+        this.updateElementPropertiesPanel();
+    }
+
+    selectElement(shape) {
+        this.selectedElements.clear();
+        this.selectedElements.add(shape);
+        this.updateLayersList();
+        this.updateElementPropertiesPanel();
+    }
+
+    deleteSelectedElements() {
+        this.shapes = this.shapes.filter(shape => !this.selectedElements.has(shape));
+        this.selectedElements.clear();
+        this.updateLayersList();
+        this.render();
+    }
+
+    moveElement(direction) {
+        const element = Array.from(this.selectedElements)[0];
+        if (!element) return;
+
+        const index = this.shapes.indexOf(element);
+        if (direction === 'up' && index < this.shapes.length - 1) {
+            [this.shapes[index], this.shapes[index + 1]] = [this.shapes[index + 1], this.shapes[index]];
+        } else if (direction === 'down' && index > 0) {
+            [this.shapes[index], this.shapes[index - 1]] = [this.shapes[index - 1], this.shapes[index]];
+        }
+        
+        this.updateLayersList();
+        this.render();
+    }
+
+    groupSelectedElements() {
+        const elements = Array.from(this.selectedElements);
+        if (elements.length < 2) return;
+
+        const group = {
+            type: 'group',
+            elements: elements,
+            x: Math.min(...elements.map(e => e.x)),
+            y: Math.min(...elements.map(e => e.y))
+        };
+
+        this.shapes = this.shapes.filter(shape => !this.selectedElements.has(shape));
+        this.shapes.push(group);
+        this.selectedElements.clear();
+        this.selectedElements.add(group);
+        
+        this.updateLayersList();
+        this.render();
+    }
+
+    handleMouseDown(e) {
+        this.isDrawing = true;
+        const pos = this.getMousePos(e);
+        
+        if (this.currentTool === 'select') {
+            const clicked = this.findShapeAtPosition(pos);
+            if (clicked) {
+                if (e.ctrlKey) {
+                    this.toggleElementSelection(clicked);
+                } else {
+                    this.selectElement(clicked);
+                }
+            } else {
+                this.selectedElements.clear();
             }
+            this.updateLayersList();
+        } else {
+            this.startShape(pos);
+        }
+    }
+
+    handleMouseMove(e) {
+        if (!this.isDrawing) return;
+        const pos = this.getMousePos(e);
+        
+        if (this.currentTool === 'select' && this.selectedShape) {
+            this.moveShape(this.selectedShape, pos);
+        } else {
+            this.updateCurrentShape(pos);
+        }
+        
+        this.render();
+    }
+
+    handleMouseUp() {
+        this.lastPoint = null;
+        this.isDrawing = false;
+        if (this.currentShape) {
+            this.shapes.push(this.currentShape);
+            this.currentShape = null;
+        }
+        if (this.currentPath) {
+            this.shapes.push(this.currentPath);
+            this.currentPath = null;
+        }
+    }
+
+    getMousePos(e) {
+        const rect = this.canvas.getBoundingClientRect();
+        return {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
         };
     }
 
-    drawPattern(e) {
-        const pattern = this.patterns[this.state.pattern.type];
-        if (!pattern) return;
-
-        const { size, spacing } = this.state.pattern;
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = size * 2;
-        tempCanvas.height = size * 2;
-        
-        const tempCtx = tempCanvas.getContext('2d');
-        tempCtx.strokeStyle = this.state.strokeColor;
-        tempCtx.fillStyle = this.state.strokeColor;
-        
-        pattern(tempCtx, size, spacing);
-        
-        this.ctx.fillStyle = this.ctx.createPattern(tempCanvas, 'repeat');
-        this.ctx.fillRect(e.offsetX - size, e.offsetY - size, size * 2, size * 2);
-    }
-
-    toggleGrid() {
-        this.state.grid.show = !this.state.grid.show;
-        this.drawGrid();
-    }
-
-    drawGrid() {
-        if (!this.state.grid.show) return;
-        
-        const w = this.canvas.width;
-        const h = this.canvas.height;
-        const s = this.state.grid.size;
-        
-        this.ctx.save();
-        this.ctx.strokeStyle = '#ddd';
-        this.ctx.lineWidth = 0.5;
-        
-        for (let x = 0; x < w; x += s) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(x, 0);
-            this.ctx.lineTo(x, h);
-            this.ctx.stroke();
+    render() {
+        // Only clear and redraw everything when not using brush
+        if (this.currentTool !== 'brush' || !this.isDrawing) {
+            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            [...this.shapes, this.currentShape].filter(Boolean).forEach(shape => {
+                this.drawShape(shape);
+            });
         }
-        
-        for (let y = 0; y < h; y += s) {
-            this.ctx.beginPath();
-            this.ctx.moveTo(0, y);
-            this.ctx.lineTo(w, y);
-            this.ctx.stroke();
-        }
-        
-        this.ctx.restore();
     }
 
-    startSelection(e) {
-        this.state.selection = {
-            startX: e.offsetX,
-            startY: e.offsetY,
+    updateToolUI() {
+        // Update main tools
+        document.querySelectorAll('.tool').forEach(tool => {
+            const toolType = tool.dataset.tool;
+            if (toolType === 'shapes') {
+                // If any shape tool is selected, highlight the shapes button
+                tool.classList.toggle('shapes-active', 
+                    ['rectangle', 'circle', 'line', 'polygon'].includes(this.currentTool));
+            } else {
+                tool.classList.toggle('active', toolType === this.currentTool);
+            }
+        });
+
+        // Update submenu items
+        document.querySelectorAll('.submenu-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.tool === this.currentTool);
+        });
+
+        // Update property groups visibility
+        document.querySelectorAll('.property-group').forEach(group => {
+            const tools = group.dataset.tools?.split(',') || [];
+            group.classList.toggle('visible', tools.includes(this.currentTool));
+        });
+    }
+
+    findShapeAtPosition(pos) {
+        return this.shapes.find(shape => {
+            if (shape.type === 'text') {
+                const metrics = this.ctx.measureText(shape.text);
+                return pos.x >= shape.x &&
+                       pos.x <= shape.x + metrics.width &&
+                       pos.y >= shape.y - shape.fontSize &&
+                       pos.y <= shape.y;
+            }
+            if (shape.type === 'rectangle') {
+                return pos.x >= shape.x && 
+                       pos.x <= shape.x + shape.width &&
+                       pos.y >= shape.y && 
+                       pos.y <= shape.y + shape.height;
+            }
+            return false;
+        });
+    }
+
+    startShape(pos) {
+        if (this.currentTool === 'text') {
+            const text = prompt('Enter text:');
+            if (text) {
+                this.currentShape = {
+                    type: 'text',
+                    x: pos.x,
+                    y: pos.y,
+                    text,
+                    fontSize: this.fontSize,
+                    fontFamily: this.fontFamily,
+                    color: this.textColor,
+                    background: this.textBackground,
+                    bold: this.textBold
+                };
+            }
+            return;
+        }
+        if (this.currentTool === 'brush') {
+            this.currentPath = {
+                type: 'brush',
+                points: [pos],
+                color: this.currentColor,
+                size: this.brushSize,
+                opacity: this.brushOpacity / 100
+            };
+            return;
+        }
+        this.startPos = pos;
+        this.currentShape = {
+            type: this.currentTool,
+            x: pos.x,
+            y: pos.y,
             width: 0,
             height: 0,
-            content: null
+            fillColor: this.fillColor,
+            strokeColor: this.strokeColor
         };
-    }
-
-    updateSelection(e) {
-        if (!this.state.selection) return;
-        
-        const selection = this.state.selection;
-        selection.width = e.offsetX - selection.startX;
-        selection.height = e.offsetY - selection.startY;
-        
-        this.ctx.putImageData(this.startState, 0, 0);
-        this.ctx.strokeStyle = '#000';
-        this.ctx.setLineDash([5, 5]);
-        this.ctx.strokeRect(
-            selection.startX, 
-            selection.startY, 
-            selection.width, 
-            selection.height
-        );
-        this.ctx.setLineDash([]);
-    }
-
-    finishSelection() {
-        if (!this.state.selection) return;
-        
-        const s = this.state.selection;
-        s.content = this.ctx.getImageData(
-            s.startX, s.startY, 
-            s.width, s.height
-        );
-    }
-
-    saveProject() {
-        if (!this.currentProjectId) return;
-
-        try {
-            const projectData = this.getProjectData();
-            const savePromise = storageHelpers.saveWithThrottle(
-                `project_${this.currentProjectId}`, 
-                JSON.stringify(projectData)
-            );
-
-            savePromise
-                .then(() => this.updateAutoSaveIndicator('Project saved', 'success'))
-                .catch(error => {
-                    console.error('Save failed:', error);
-                    this.updateAutoSaveIndicator('Save failed, retrying...', 'error');
-                    this.retryOperation(error);
-                });
-
-        } catch (error) {
-            console.error('Save failed:', error);
-            this.updateAutoSaveIndicator('Save failed', 'error');
+        if (this.currentShape) {
+            this.updateLayersList();
         }
     }
 
-    loadProjects() {
-        const stored = localStorage.getItem('novasketch_projects');
-        if (stored) {
-            this.projects = JSON.parse(stored);
+    moveShape(shape, pos) {
+        if (!this.lastPos) {
+            this.lastPos = pos;
+            return;
         }
-    }
-
-    loadProject(project) {
-        if (project.width && project.height) {
-            this.resizeCanvas(project.width, project.height);
-        }
-        // ...rest of load method...
-    }
-
-    setupProjectManager() {
-        this.overlay = document.getElementById('projectOverlay');
-        this.projectGrid = document.getElementById('projectGrid');
         
-        // Project manager button
-        document.getElementById('projectManagerBtn').addEventListener('click', 
-            () => this.showProjectManager());
-        document.getElementById('closeProjectManager').addEventListener('click', 
-            () => this.hideProjectManager());
+        const dx = pos.x - this.lastPos.x;
+        const dy = pos.y - this.lastPos.y;
+        
+        shape.x += dx;
+        shape.y += dy;
+        
+        this.lastPos = pos;
+    }
+
+    updateCurrentShape(pos) {
+        if (this.currentTool === 'brush' && this.currentPath) {
+            // Draw immediate line segment instead of storing points
+            if (this.lastPoint) {
+                this.ctx.beginPath();
+                this.ctx.lineCap = 'round';
+                this.ctx.lineJoin = 'round';
+                this.ctx.strokeStyle = this.currentPath.color;
+                this.ctx.lineWidth = this.currentPath.size;
+                this.ctx.globalAlpha = this.currentPath.opacity;
+                
+                this.ctx.moveTo(this.lastPoint.x, this.lastPoint.y);
+                this.ctx.lineTo(pos.x, pos.y);
+                this.ctx.stroke();
+            }
+            this.lastPoint = pos;
             
-        // Project actions
-        document.getElementById('newProject').addEventListener('click', () => {
-            if (confirm('Start a new project? Current work will be saved first.')) {
-                this.saveCurrentProject();
-                this.createNewProject();
+            // Store simplified path for redrawing
+            if (!this.currentPath.points || 
+                this.getDistance(this.currentPath.points[this.currentPath.points.length - 1], pos) > 2) {
+                this.currentPath.points = this.currentPath.points || [];
+                this.currentPath.points.push(pos);
             }
-        });
-        
-        document.getElementById('saveProject').addEventListener('click', 
-            () => this.showSaveDialog());
-            
-        document.getElementById('clearCanvas').addEventListener('click', () => {
-            if (confirm('Clear the canvas? This cannot be undone.')) {
-                this.clear();
-            }
-        });
+            return;
+        }
+        if (!this.currentShape || !this.startPos) return;
 
-        // Load existing projects
-        this.loadProjectList();
-
-        // Add project card hover effects
-        this.projectGrid.addEventListener('mouseover', (e) => {
-            const card = e.target.closest('.project-card');
-            if (card) {
-                card.classList.add('hover');
-            }
-        });
-
-        this.projectGrid.addEventListener('mouseout', (e) => {
-            const card = e.target.closest('.project-card');
-            if (card) {
-                card.classList.remove('hover');
-            }
-        });
-
-        // Close on backdrop click
-        this.overlay.addEventListener('click', (e) => {
-            if (e.target === this.overlay) {
-                this.hideProjectManager();
-            }
-        });
-
-        // Close on escape key
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape' && this.overlay.classList.contains('active')) {
-                this.hideProjectManager();
-            }
-        });
-    }
-
-    createNewProject() {
-        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        this.currentProjectId = null;
-        this.currentProjectName = null;
-        this.hasUnsavedChanges = false;
-        this.saveState();
-        this.overlay.style.display = 'none';
-    }
-
-    saveCurrentProject() {
-        if (this.hasUnsavedChanges || !this.currentProjectId) {
-            const name = this.currentProjectName || 'Untitled';
-            this.saveProject(name);
+        switch (this.currentShape.type) {
+            case 'rectangle':
+                this.currentShape.width = pos.x - this.startPos.x;
+                this.currentShape.height = pos.y - this.startPos.y;
+                break;
+            case 'circle':
+                const radius = Math.sqrt(
+                    Math.pow(pos.x - this.startPos.x, 2) + 
+                    Math.pow(pos.y - this.startPos.y, 2)
+                );
+                this.currentShape.radius = radius;
+                break;
+            case 'line':
+                this.currentShape.endX = pos.x;
+                this.currentShape.endY = pos.y;
+                break;
         }
     }
 
-    loadProjectList() {
-        const projectList = JSON.parse(localStorage.getItem('projectList') || '[]');
-        this.projectGrid.innerHTML = '';
+    getDistance(p1, p2) {
+        return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+    }
 
-        if (projectList.length === 0) {
-            this.projectGrid.innerHTML = `
-                <div class="empty-state">
-                    <i class="fa-solid fa-folder-open"></i>
-                    <h3>No projects yet</h3>
-                    <p>Create a new project to get started</p>
-                </div>
-            `;
+    drawShape(shape) {
+        if (!shape || shape.hidden) return;
+        
+        if (shape.type === 'group') {
+            shape.elements.forEach(element => this.drawShape(element));
             return;
         }
 
-        projectList.sort((a, b) => b.lastModified - a.lastModified)
-            .forEach(project => {
-                const card = document.createElement('div');
-                card.className = 'project-card';
-                card.innerHTML = `
-                    <img src="${project.thumbnail}" alt="${project.name}">
-                    <div class="project-info">
-                        <h3>${project.name}</h3>
-                        <p><i class="fa-regular fa-clock"></i> ${new Date(project.lastModified).toLocaleDateString()}</p>
-                    </div>
-                    <div class="project-actions">
-                        <button class="primary-btn" onclick="app.loadProject('${project.id}')">
-                            <i class="fa-solid fa-folder-open"></i> Open
-                        </button>
-                        <button class="danger-btn" onclick="app.deleteProject('${project.id}')">
-                            <i class="fa-solid fa-trash"></i>
-                        </button>
-                    </div>
-                `;
-                this.projectGrid.appendChild(card);
-            });
-    }
+        if (shape.type === 'brush') {
+            const points = shape.points;
+            if (!points || points.length < 2) return;
 
-    showProjectManager() {
-        this.saveCurrentProject();
-        this.loadProjectList();
-        this.overlay.classList.add('active');
-    }
+            this.ctx.beginPath();
+            this.ctx.lineCap = 'round';
+            this.ctx.lineJoin = 'round';
+            this.ctx.strokeStyle = shape.color;
+            this.ctx.lineWidth = shape.size;
+            this.ctx.globalAlpha = shape.opacity;
 
-    hideProjectManager() {
-        this.overlay.classList.remove('active');
-    }
-
-    // Update existing project methods
-    saveProject(name) {
-        const projectId = this.currentProjectId || Date.now().toString();
-        this.currentProjectId = projectId;
-        this.currentProjectName = name;
-
-        const projectData = this.getProjectData();
-        
-        // Save project data
-        localStorage.setItem(`project_${projectId}`, JSON.stringify(projectData));
-        
-        // Update project list
-        let projectList = JSON.parse(localStorage.getItem('projectList') || '[]');
-        const existingIndex = projectList.findIndex(p => p.id === projectId);
-        
-        if (existingIndex >= 0) {
-            projectList[existingIndex] = projectData;
-        } else {
-            projectList.push(projectData);
+            this.ctx.moveTo(points[0].x, points[0].y);
+            
+            // Draw direct line segments for better performance
+            for (let i = 1; i < points.length; i++) {
+                this.ctx.lineTo(points[i].x, points[i].y);
+            }
+            
+            this.ctx.stroke();
+            this.ctx.globalAlpha = 1;
+            return;
         }
-        
-        localStorage.setItem('projectList', JSON.stringify(projectList));
-        this.loadProjectList();
-        this.updateAutoSaveIndicator('Project saved');
+
+        this.ctx.beginPath();
+
+        // Reset line settings for other shapes
+        this.ctx.lineCap = 'butt';
+        this.ctx.lineWidth = 1;
+
+        this.ctx.strokeStyle = shape.strokeColor;
+        this.ctx.fillStyle = shape.fillColor;
+
+        switch (shape.type) {
+            case 'text':
+                const font = `${shape.bold ? 'bold' : ''} ${shape.fontSize}px ${shape.fontFamily}`;
+                this.ctx.font = font;
+                this.ctx.fillStyle = shape.background;
+                
+                // Measure text for background
+                const metrics = this.ctx.measureText(shape.text);
+                const height = shape.fontSize;
+                this.ctx.fillRect(
+                    shape.x,
+                    shape.y - height + 5,
+                    metrics.width,
+                    height
+                );
+                
+                // Draw text
+                this.ctx.fillStyle = shape.color;
+                this.ctx.fillText(shape.text, shape.x, shape.y);
+                break;
+
+            case 'rectangle':
+                if (shape.fillColor !== 'transparent') {
+                    this.ctx.fillStyle = shape.fillColor;
+                    this.ctx.fillRect(shape.x, shape.y, shape.width, shape.height);
+                }
+                this.ctx.strokeStyle = shape.strokeColor;
+                this.ctx.strokeRect(shape.x, shape.y, shape.width, shape.height);
+                break;
+
+            case 'circle':
+                if (shape.radius) {
+                    if (shape.fillColor !== 'transparent') {
+                        this.ctx.fillStyle = shape.fillColor;
+                        this.ctx.arc(shape.x, shape.y, shape.radius, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    }
+                    this.ctx.strokeStyle = shape.strokeColor;
+                    this.ctx.arc(shape.x, shape.y, shape.radius, 0, Math.PI * 2);
+                    this.ctx.stroke();
+                }
+                break;
+
+            case 'line':
+                if (shape.endX !== undefined) {
+                    this.ctx.moveTo(shape.x, shape.y);
+                    this.ctx.lineTo(shape.endX, shape.endY);
+                    this.ctx.stroke();
+                }
+                break;
+        }
+        this.ctx.closePath();
     }
 
-    loadProject(projectId) {
-        const projectData = JSON.parse(localStorage.getItem(`project_${projectId}`));
-        if (!projectData) return;
+    updateElementPropertiesPanel() {
+        const elements = Array.from(this.selectedElements);
+        if (elements.length === 0) {
+            document.querySelector('[data-tools="selected-element"]').classList.remove('visible');
+            return;
+        }
 
-        this.currentProjectId = projectId;
-        this.currentProjectName = projectData.name;
+        document.querySelector('[data-tools="selected-element"]').classList.add('visible');
         
-        // Load canvas size
-        this.resizeCanvas(projectData.width, projectData.height);
+        // Hide all element-specific property groups first
+        document.querySelectorAll('[data-element-types]').forEach(group => {
+            group.classList.remove('visible');
+        });
 
-        // Load canvas content
-        const img = new Image();
-        img.onload = () => {
-            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            this.ctx.drawImage(img, 0, 0);
-            this.saveState();
-            this.overlay.style.display = 'none';
-        };
-        img.src = projectData.canvasData;
-        this.updateAutoSaveIndicator('Project loaded');
+        const element = elements[0]; // Use first selected element for properties
+        const type = element.type;
+
+        // Show relevant property group
+        document.querySelector(`[data-element-types="${type}"]`)?.classList.add('visible');
+
+        // Update property values
+        switch (type) {
+            case 'rectangle':
+            case 'circle':
+                document.getElementById('elementFillColor').value = element.fillColor;
+                document.getElementById('elementStrokeColor').value = element.strokeColor;
+                break;
+            case 'text':
+                document.getElementById('elementFontSize').value = element.fontSize;
+                document.getElementById('elementFontFamily').value = element.fontFamily;
+                document.getElementById('elementTextColor').value = element.color;
+                document.getElementById('elementBackground').value = element.background;
+                document.getElementById('elementTextBold').checked = element.bold;
+                break;
+            case 'brush':
+                document.getElementById('elementBrushSize').value = element.size;
+                document.getElementById('elementOpacity').value = element.opacity * 100;
+                break;
+        }
     }
 
-    deleteProject(projectId) {
-        if (!confirm('Are you sure you want to delete this project?')) return;
+    loadProjectFromURL() {
+        const params = new URLSearchParams(window.location.search);
+        const projectId = params.get('project');
+        
+        if (projectId) {
+            const projects = JSON.parse(localStorage.getItem('novaSketchProjects')) || [];
+            this.currentProject = projects.find(p => p.id === parseInt(projectId));
+            
+            if (this.currentProject) {
+                this.shapes = this.currentProject.data.shapes;
+                document.getElementById('projectTitle').value = this.currentProject.title;
+                
+                // Restore canvas size if saved
+                if (this.currentProject.data.canvasSize) {
+                    const container = this.canvas.parentElement;
+                    container.style.width = `${this.currentProject.data.canvasSize.width}px`;
+                    container.style.height = `${this.currentProject.data.canvasSize.height}px`;
+                }
+                
+                this.resizeCanvas();
+                this.render();
+            }
+        }
 
-        localStorage.removeItem(`project_${projectId}`);
-        
-        let projectList = JSON.parse(localStorage.getItem('projectList') || '[]');
-        projectList = projectList.filter(p => p.id !== projectId);
-        localStorage.setItem('projectList', JSON.stringify(projectList));
-        
-        this.loadProjectList();
+        // Add project title to the page
+        document.title = this.currentProject ? 
+            `${this.currentProject.title} - NovaSketch` : 
+            'New Project - NovaSketch';
     }
 
     setupAutoSave() {
-        // Clear any existing interval
-        if (this.autoSaveInterval) {
-            clearInterval(this.autoSaveInterval);
-        }
+        setInterval(() => this.saveProject(), 30000); // Auto-save every 30 seconds
+    }
 
-        // Set up new auto-save interval
-        this.autoSaveInterval = setInterval(() => {
-            if (this.hasUnsavedChanges && this.currentProjectId) {
-                this.autoSave();
+    saveProject() {
+        if (!this.currentProject) return;
+
+        // Update project data
+        this.currentProject.data.shapes = this.shapes;
+        this.currentProject.lastModified = new Date();
+        this.currentProject.thumbnail = this.canvas.toDataURL('image/png');
+
+        // Save to localStorage
+        const projects = JSON.parse(localStorage.getItem('novaSketchProjects')) || [];
+        const index = projects.findIndex(p => p.id === this.currentProject.id);
+        if (index !== -1) {
+            projects[index] = this.currentProject;
+        }
+        localStorage.setItem('novaSketchProjects', JSON.stringify(projects));
+    }
+
+    initializeProjectTitle() {
+        const titleInput = document.getElementById('projectTitle');
+        titleInput.addEventListener('change', (e) => {
+            if (this.currentProject) {
+                this.currentProject.title = e.target.value;
+                this.saveProject();
             }
-        }, this.autoSaveDelay);
-
-        // Initial indicator state
-        this.updateAutoSaveIndicator('Ready');
+        });
     }
 
-    autoSave() {
-        if (!this.currentProjectId) return;
+    initializeMenus() {
+        // Add action handlers for menu items
+        document.querySelectorAll('.submenu-item[data-action]').forEach(item => {
+            item.addEventListener('click', (e) => {
+                const action = e.currentTarget.dataset.action;
+                switch (action) {
+                    // File actions
+                    case 'newProject':
+                        if (confirm('Create new project? Unsaved changes will be lost.')) {
+                            window.location.href = 'index.html';
+                        }
+                        break;
+                    case 'saveProject':
+                        this.saveProject();
+                        alert('Project saved successfully!');
+                        break;
+                    case 'exportPNG':
+                        this.exportAs('png');
+                        break;
+                    case 'exportJPG':
+                        this.exportAs('jpg');
+                        break;
+                    case 'exportPDF':
+                        this.exportAs('pdf');
+                        break;
+                    case 'printCanvas':
+                        this.printCanvas();
+                        break;
+
+                    // Edit actions
+                    case 'undo':
+                        this.undo();
+                        break;
+                    case 'redo':
+                        this.redo();
+                        break;
+                    case 'delete':
+                        this.deleteSelected();
+                        break;
+                    case 'duplicate':
+                        this.copySelected();
+                        break;
+
+                    // View actions
+                    case 'zoomIn':
+                        this.zoom(1.2);
+                        break;
+                    case 'zoomOut':
+                        this.zoom(0.8);
+                        break;
+                    case 'fitScreen':
+                        this.fitToScreen();
+                        break;
+                    case 'toggleGrid':
+                        this.toggleGrid();
+                        break;
+                    case 'toggleRulers':
+                        this.toggleRulers();
+                        break;
+                }
+            });
+        });
+
+        // Initialize color previews
+        const fillColorPreview = document.getElementById('fillColorPreview');
+        const strokeColorPreview = document.getElementById('strokeColorPreview');
+        const fillColor = document.getElementById('fillColor');
+        const strokeColor = document.getElementById('strokeColor');
+
+        if (fillColorPreview && strokeColorPreview && fillColor && strokeColor) {
+            // ...existing color preview code...
+        }
+    }
+
+    initializePanelCollapse() {
+        const layersPanel = document.querySelector('.layers-panel');
+        const collapseBtn = document.getElementById('collapseElements');
         
-        try {
-            const projectData = this.getProjectData();
-            localStorage.setItem(`project_${this.currentProjectId}`, JSON.stringify(projectData));
-            this.hasUnsavedChanges = false;
-            this.updateAutoSaveIndicator('Auto-saved');
-        } catch (error) {
-            console.error('Auto-save failed:', error);
-            this.updateAutoSaveIndicator('Auto-save failed');
+        if (collapseBtn && layersPanel) {
+            collapseBtn.addEventListener('click', () => {
+                layersPanel.classList.toggle('collapsed');
+                // Save state to localStorage
+                localStorage.setItem('layersPanelCollapsed', layersPanel.classList.contains('collapsed'));
+            });
+
+            // Restore previous state
+            const wasCollapsed = localStorage.getItem('layersPanelCollapsed') === 'true';
+            if (wasCollapsed) {
+                layersPanel.classList.add('collapsed');
+            }
         }
     }
 
-    updateAutoSaveIndicator(status, type = 'info') {
-        const indicator = document.querySelector('.auto-save-indicator');
-        if (!indicator) return;
+    initializeResizeHandles() {
+        const container = this.canvas.parentElement;
+        let isResizing = false;
+        let currentHandle = null;
+        let startX, startY, startWidth, startHeight;
 
-        // Clear any existing timeouts
-        if (this.indicatorTimeout) {
-            clearTimeout(this.indicatorTimeout);
-        }
+        // Add resize event listeners
+        document.querySelectorAll('.resize-handle').forEach(handle => {
+            handle.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                currentHandle = e.target.dataset.resize;
+                startX = e.clientX;
+                startY = e.clientY;
+                startWidth = container.offsetWidth;
+                startHeight = container.offsetHeight;
+                
+                document.addEventListener('mousemove', onResize);
+                document.addEventListener('mouseup', stopResize);
+            });
+        });
 
-        const icons = {
-            info: 'fa-info-circle',
-            success: 'fa-check-circle',
-            error: 'fa-exclamation-circle',
-            warning: 'fa-exclamation-triangle'
+        const onResize = (e) => {
+            if (!isResizing) return;
+
+            const dx = e.clientX - startX;
+            const dy = e.clientY - startY;
+
+            switch (currentHandle) {
+                case 'e':
+                    container.style.width = `${startWidth + dx}px`;
+                    break;
+                case 's':
+                    container.style.height = `${startHeight + dy}px`;
+                    break;
+                case 'se':
+                    container.style.width = `${startWidth + dx}px`;
+                    container.style.height = `${startHeight + dy}px`;
+                    break;
+            }
+
+            // Update canvas size to match container
+            this.resizeCanvas();
+            this.render();
         };
 
-        indicator.innerHTML = `
-            <i class="fas ${icons[type]}"></i>
-            <span>${status}</span>
-        `;
-        
-        indicator.className = `auto-save-indicator ${type} active`;
-
-        this.indicatorTimeout = setTimeout(() => {
-            indicator.classList.remove('active');
-        }, 3000);
-    }
-
-    getProjectData() {
-        return {
-            id: this.currentProjectId,
-            name: this.currentProjectName || 'Untitled',
-            thumbnail: this.canvas.toDataURL('image/jpeg', 0.5),
-            canvasData: this.canvas.toDataURL(),
-            width: this.canvas.width,
-            height: this.canvas.height,
-            lastModified: Date.now()
+        const stopResize = () => {
+            isResizing = false;
+            document.removeEventListener('mousemove', onResize);
+            document.removeEventListener('mouseup', stopResize);
+            
+            // Save canvas size to project data
+            if (this.currentProject) {
+                this.currentProject.data.canvasSize = {
+                    width: container.offsetWidth,
+                    height: container.offsetHeight
+                };
+                this.saveProject();
+            }
         };
     }
 
-    showSaveDialog() {
-        const name = prompt('Enter project name:', this.currentProjectName || 'Untitled');
-        if (name) {
-            this.saveProject(name);
-            this.updateAutoSaveIndicator('Project saved successfully');
-        }
-    }
-
-    cleanup() {
-        if (this.autoSaveInterval) {
-            clearInterval(this.autoSaveInterval);
-        }
-    }
+    // Add these method stubs for the new functionality
+    undo() { /* TODO: Implement undo */ }
+    redo() { /* TODO: Implement redo */ }
+    copySelected() { /* TODO: Implement copy */ }
+    pasteSelected() { /* TODO: Implement paste */ }
+    deleteSelected() { /* TODO: Implement delete */ }
+    zoom(factor) { /* TODO: Implement zoom */ }
+    fitToScreen() { /* TODO: Implement fit to screen */ }
+    toggleGrid() { /* TODO: Implement grid toggle */ }
+    toggleRulers() { /* TODO: Implement rulers toggle */ }
 }
 
-// Make app global for project manager buttons
-const app = new DrawingApp();
-window.app = app;
-window.addEventListener('unload', () => app.cleanup());
+// Initialize the application
+document.addEventListener('DOMContentLoaded', () => {
+    try {
+        window.novaSketch = new NovaSketch();
+    } catch (error) {
+        console.error('Failed to initialize NovaSketch:', error);
+    }
+});

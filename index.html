@@ -1,114 +1,75 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>NovaSketch</title>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Manage your design projects with NovaSketch. Create, organize, and access all your vector graphics designs in one place.">
+    <meta name="keywords" content="design projects, vector graphics, project management, design portfolio, NovaSketch">
+    <meta name="author" content="NovaSketch">
+    <meta property="og:title" content="Projects - NovaSketch - Manage Your Designs">
+    <meta property="og:description" content="Create and manage your vector graphics projects. Free online design tool for professionals and hobbyists.">
+    <meta property="og:image" content="https://d2zcpib8duehag.cloudfront.net/novasketch.png">
+    <meta property="og:url" content="https://sketch.nova.xxavvgroup.com">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="canonical" href="https://sketch.nova.xxavvgroup.com">
+    <title>Projects - NovaSketch</title>
+    <!-- Add structured data for rich results -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "CollectionPage",
+        "name": "NovaSketch Projects",
+        "description": "Collection of vector graphics projects created with NovaSketch",
+        "provider": {
+            "@type": "Organization",
+            "name": "NovaSketch",
+            "url": "https://sketch.nova.xxavvgroup.com"
+        }
+    }
+    </script>
+    <link rel="icon" type="image/x-icon" href="https://d2zcpib8duehag.cloudfront.net/novasketch.png">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="projects.css">
 </head>
 <body>
-    <div class="app-container">
-        <header class="app-header">
-            <div class="header-left">
-                <h1><i class="fa-solid fa-pen-ruler"></i> NovaSketch</h1>
+    <div class="app-header">
+        <div class="header-content">
+            <div class="header-title">
+                <h1>NovaSketch</h1>
+                <span class="project-count" id="projectCount">0 Projects</span>
             </div>
-            <div class="header-right">
-                <div class="auto-save-indicator"></div>
-            </div>
-        </header>
-        
-        <div class="toolbar">
-            <div class="tool-group primary-tools">
-                <button id="projectManagerBtn" class="primary-btn">
-                    <i class="fa-solid fa-folder"></i>
-                    Projects
-                </button>
-                <button id="undo" class="icon-btn" title="Undo (Ctrl+Z)">
-                    <i class="fa-solid fa-undo"></i>
-                </button>
-                <button id="redo" class="icon-btn" title="Redo (Ctrl+Y)">
-                    <i class="fa-solid fa-redo"></i>
-                </button>
-            </div>
-            <div class="tool-group">
-                <button id="clear">Clear</button>
-                <button id="save">Save</button>
-                <input type="file" id="load" accept=".sketch" style="display:none">
-                <button id="loadBtn">Load</button>
-            </div>
-            <div class="tool-group">
-                <select id="tool">
-                    <option value="brush">Brush</option>
-                    <option value="line">Line</option>
-                    <option value="rect">Rectangle</option>
-                    <option value="circle">Circle</option>
-                    <option value="eraser">Eraser</option>
-                    <option value="text">Text</option>
-                    <option value="select">Select</option>
-                    <option value="pattern">Pattern</option>
-                </select>
-                <input type="color" id="strokeColor" value="#000000">
-                <input type="color" id="fillColor" value="#ffffff">
-                <input type="range" id="size" min="1" max="50" value="5">
-                <button id="gridToggle" title="Toggle Grid (G)">Grid</button>
-                <button id="snapToggle" title="Snap to Grid (S)">Snap</button>
-                <input type="number" id="rotation" value="0" min="-180" max="180" title="Rotation">
-            </div>
-            <div class="tool-group" id="textControls" style="display: none;">
-                <input type="text" id="textInput" placeholder="Enter text...">
-                <select id="font">
-                    <option value="Arial">Arial</option>
-                    <option value="Times New Roman">Times New Roman</option>
-                    <option value="Courier New">Courier New</option>
-                </select>
-                <input type="number" id="fontSize" value="20" min="8" max="72">
-            </div>
-            <div class="tool-group" id="patternControls" style="display: none;">
-                <select id="patternType">
-                    <option value="dots">Dots</option>
-                    <option value="lines">Lines</option>
-                    <option value="zigzag">Zigzag</option>
-                    <option value="crosshatch">Crosshatch</option>
-                </select>
-                <input type="number" id="patternSize" value="10" min="5" max="50">
-                <input type="number" id="patternSpacing" value="5" min="1" max="20">
-            </div>
-        </div>
-
-        <main class="main-content">
-            <div class="canvas-container">
-                <canvas id="canvas"></canvas>
-                <div class="resize-handle top-left"></div>
-                <div class="resize-handle top-right"></div>
-                <div class="resize-handle bottom-left"></div>
-                <div class="resize-handle bottom-right"></div>
-                <div class="canvas-size-display"></div>
-            </div>
-        </main>
-
-        <div class="overlay" id="projectOverlay">
-            <div class="modal project-manager">
-                <div class="modal-header">
-                    <h2><i class="fa-solid fa-folder-open"></i> Project Manager</h2>
-                    <button id="closeProjectManager" class="icon-btn">
-                        <i class="fa-solid fa-times"></i>
-                    </button>
+            <div class="header-actions">
+                <div class="sort-box">
+                    <select id="sortProjects" class="sort-select">
+                        <option value="recent">Recent</option>
+                        <option value="oldest">Oldest</option>
+                        <option value="name">Name</option>
+                    </select>
                 </div>
-                <div class="modal-actions">
-                    <button id="newProject" class="primary-btn">
-                        <i class="fa-solid fa-plus"></i> New Project
-                    </button>
-                    <button id="saveProject" class="secondary-btn">
-                        <i class="fa-solid fa-save"></i> Save Project
-                    </button>
-                    <button id="clearCanvas" class="danger-btn">
-                        <i class="fa-solid fa-trash"></i> Clear Canvas
-                    </button>
-                </div>
-                <div class="project-grid" id="projectGrid"></div>
+                <button id="newProject" class="primary-button">
+                    <i class="fas fa-plus"></i>
+                    <span>New Project</span>
+                </button>
             </div>
         </div>
     </div>
-    <script src="app.js"></script>
+    <div class="projects-container">
+        <div class="projects-content">
+            <div class="projects-grid" id="projectsGrid">
+                <!-- Projects will be added here dynamically -->
+            </div>
+            
+            <div class="empty-state" id="emptyState">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 24 24'%3E%3Cpath fill='%23cccccc' d='M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-1.6 14.1h-1.9v-1.9h1.9v1.9zm0-3.7h-1.9v-1.9h1.9v1.9zm0-3.7h-1.9V7.8h1.9v1.9zm-3.7 7.4H5.9v-1.9h7.8v1.9zm0-3.7H5.9v-1.9h7.8v1.9zm0-3.7H5.9V7.8h7.8v1.9z'/%3E%3C/svg%3E" alt="No projects">
+                <h2>No Projects Yet</h2>
+                <p>Create your first project to get started!</p>
+                <button class="primary-button" onclick="projectManager.createNewProject()">
+                    <i class="fas fa-plus"></i> Create Project
+                </button>
+            </div>
+        </div>
+    </div>
+    <script src="projects.js"></script>
 </body>
 </html>
